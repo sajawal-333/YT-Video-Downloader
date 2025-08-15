@@ -128,22 +128,37 @@ def direct_download():
                 if filename and not filename[0].isalnum():
                     filename = 'video_' + filename
                 
-                # Use send_file for reliable file serving
+                # Copy file to a permanent location before serving
+                import tempfile as tf
+                permanent_file = tf.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1])
+                permanent_file.close()
+                
+                # Copy the downloaded file to permanent location
+                shutil.copy2(file_path, permanent_file.name)
+                
+                # Clean up the temporary directory immediately
+                try:
+                    shutil.rmtree(temp_dir)
+                    print(f"Cleaned up temp directory: {temp_dir}")
+                except Exception as e:
+                    print(f"Error cleaning up {temp_dir}: {e}")
+                
+                # Serve the permanent file
                 response = send_file(
-                    file_path,
+                    permanent_file.name,
                     as_attachment=True,
                     download_name=filename,
                     mimetype='application/octet-stream'
                 )
                 
-                # Add cleanup after response is sent
+                # Clean up permanent file after response
                 @response.call_on_close
                 def cleanup():
                     try:
-                        shutil.rmtree(temp_dir)
-                        print(f"Cleaned up temp directory: {temp_dir}")
+                        os.unlink(permanent_file.name)
+                        print(f"Cleaned up permanent file: {permanent_file.name}")
                     except Exception as e:
-                        print(f"Error cleaning up {temp_dir}: {e}")
+                        print(f"Error cleaning up {permanent_file.name}: {e}")
                 
                 return response
                 
