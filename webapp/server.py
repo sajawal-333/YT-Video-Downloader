@@ -128,39 +128,24 @@ def direct_download():
                 if filename and not filename[0].isalnum():
                     filename = 'video_' + filename
                 
-                # Stream the file to the user
-                def generate():
-                    try:
-                        with open(file_path, 'rb') as f:
-                            while True:
-                                chunk = f.read(8192)  # 8KB chunks
-                                if not chunk:
-                                    break
-                                yield chunk
-                    finally:
-                        # Clean up temporary files
-                        try:
-                            shutil.rmtree(temp_dir)
-                        except:
-                            pass
-                
-                # Determine MIME type
-                mime_type = 'application/octet-stream'
-                if filename.endswith('.mp4'):
-                    mime_type = 'video/mp4'
-                elif filename.endswith('.mp3'):
-                    mime_type = 'audio/mpeg'
-                elif filename.endswith('.webm'):
-                    mime_type = 'video/webm'
-                
-                return Response(
-                    generate(),
-                    mimetype=mime_type,
-                    headers={
-                        'Content-Disposition': f'attachment; filename="{filename}"',
-                        'Content-Type': mime_type
-                    }
+                # Use send_file for reliable file serving
+                response = send_file(
+                    file_path,
+                    as_attachment=True,
+                    download_name=filename,
+                    mimetype='application/octet-stream'
                 )
+                
+                # Add cleanup after response is sent
+                @response.call_on_close
+                def cleanup():
+                    try:
+                        shutil.rmtree(temp_dir)
+                        print(f"Cleaned up temp directory: {temp_dir}")
+                    except Exception as e:
+                        print(f"Error cleaning up {temp_dir}: {e}")
+                
+                return response
                 
         except Exception as e:
             # Clean up on error
