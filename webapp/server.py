@@ -1,11 +1,13 @@
 import os
 import threading
 import time
+import json
 from pathlib import Path
 from typing import Optional
-import glob
+import tempfile
+import shutil
 
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, Response, stream_template
 from flask_cors import CORS
 
 try:
@@ -15,35 +17,6 @@ except Exception as e:
 
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
-
-_jobs = {}
-_downloaded_files = {}  # Track downloaded files for each job
-
-# Cleanup old files periodically
-def cleanup_old_files():
-    """Clean up files older than 1 hour"""
-    while True:
-        try:
-            current_time = time.time()
-            downloads_dir = Path('downloads')
-            if downloads_dir.exists():
-                for file_path in downloads_dir.glob('*'):
-                    if file_path.is_file():
-                        # Remove files older than 1 hour
-                        if current_time - file_path.stat().st_mtime > 3600:
-                            try:
-                                file_path.unlink()
-                                print(f"Cleaned up old file: {file_path}")
-                            except Exception as e:
-                                print(f"Error cleaning up {file_path}: {e}")
-        except Exception as e:
-            print(f"Error in cleanup: {e}")
-        time.sleep(300)  # Run cleanup every 5 minutes
-
-# Start cleanup thread
-cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
-cleanup_thread.start()
-
 
 def build_format_string(max_height: str) -> str:
     if max_height == 'best':
@@ -99,12 +72,23 @@ def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: in
     return opts
 
 
-@app.route('/api/download', methods=['POST'])
-def api_download():
+@app.route('/api/direct-download', methods=['POST'])
+def direct_download():
+    """Direct download endpoint that streams the file to user's browser"""
     if yt_dlp is None:
         return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
 
-    data = request.get_json(force=True)
+    # Handle both JSON and form data
+    if request.is_json:
+        data = request.get_json(force=True)
+    else:
+        # Handle form data
+        data_str = request.form.get('data', '{}')
+        try:
+            data = json.loads(data_str)
+        except:
+            return jsonify({'ok': False, 'error': 'Invalid data format'}), 400
+
     url = (data.get('url') or '').strip()
     quality = (data.get('quality') or 'best').strip()
     output_type = (data.get('outputType') or 'mp4').strip()
@@ -112,119 +96,91 @@ def api_download():
     referer = (data.get('referer') or '').strip() or None
     user_agent = (data.get('userAgent') or '').strip() or None
     extra_headers = data.get('headers') or {}
-    out_dir = Path(data.get('outputDir') or 'downloads').resolve()
 
     if not url:
         return jsonify({'ok': False, 'error': 'URL required'}), 400
 
-    job_id = os.urandom(6).hex()
-    _jobs[job_id] = {'status': 'queued', 'progress': 0, 'message': 'Queued'}
-    _downloaded_files[job_id] = []  # Track files for this job
-
-    def worker():
+    # Create temporary directory for this download
+    temp_dir = Path(tempfile.mkdtemp())
+    
+    try:
+        opts = build_opts(temp_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
+        
+        # Download the file
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            # Get video info first
+            info = ydl.extract_info(url, download=False)
+            video_title = info.get('title', 'video')
+            video_id = info.get('id', 'unknown')
+            
+            # Download the file
+            ydl.download([url])
+            
+            # Find the downloaded file
+            downloaded_files = list(temp_dir.glob('*'))
+            if not downloaded_files:
+                return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
+            
+            file_path = downloaded_files[0]
+            filename = file_path.name
+            
+            # Stream the file to the user
+            def generate():
+                try:
+                    with open(file_path, 'rb') as f:
+                        while True:
+                            chunk = f.read(8192)  # 8KB chunks
+                            if not chunk:
+                                break
+                            yield chunk
+                finally:
+                    # Clean up temporary files
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except:
+                        pass
+            
+            # Determine MIME type
+            mime_type = 'application/octet-stream'
+            if filename.endswith('.mp4'):
+                mime_type = 'video/mp4'
+            elif filename.endswith('.mp3'):
+                mime_type = 'audio/mpeg'
+            elif filename.endswith('.webm'):
+                mime_type = 'video/webm'
+            
+            return Response(
+                generate(),
+                mimetype=mime_type,
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Type': mime_type
+                }
+            )
+            
+    except Exception as e:
+        # Clean up on error
         try:
-            _jobs[job_id]['status'] = 'running'
-            opts = build_opts(out_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
-
-            def hook(d):
-                status = d.get('status')
-                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-                downloaded = d.get('downloaded_bytes') or 0
-                speed = d.get('speed') or 0
-                eta = d.get('eta') or 0
-                if status == 'downloading':
-                    pct = int(downloaded * 100 / total) if total else 0
-                    _jobs[job_id]['progress'] = pct
-                    _jobs[job_id]['message'] = 'downloading'
-                elif status == 'finished':
-                    _jobs[job_id]['progress'] = 100
-                    _jobs[job_id]['message'] = 'processing'
-                # Always publish metrics
-                _jobs[job_id]['status'] = status or _jobs[job_id].get('status', 'running')
-                _jobs[job_id]['totalBytes'] = int(total)
-                _jobs[job_id]['downloadedBytes'] = int(downloaded)
-                _jobs[job_id]['speedBps'] = int(speed)
-                _jobs[job_id]['etaSec'] = int(eta)
-
-            opts['progress_hooks'] = [hook]
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
-            
-            # Find downloaded files
-            if out_dir.exists():
-                for file_path in out_dir.glob('*'):
-                    if file_path.is_file():
-                        _downloaded_files[job_id].append({
-                            'filename': file_path.name,
-                            'size': file_path.stat().st_size,
-                            'path': str(file_path)
-                        })
-            
-            _jobs[job_id]['status'] = 'done'
-            _jobs[job_id]['progress'] = 100
-            _jobs[job_id]['message'] = 'completed'
-            _jobs[job_id]['files'] = _downloaded_files[job_id]
-        except Exception as e:
-            _jobs[job_id]['status'] = 'error'
-            _jobs[job_id]['message'] = str(e)
-
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    return jsonify({'ok': True, 'jobId': job_id})
+            shutil.rmtree(temp_dir)
+        except:
+            pass
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-@app.route('/api/status/<job_id>')
-def api_status(job_id):
-    job = _jobs.get(job_id)
-    if not job:
-        return jsonify({'ok': False, 'error': 'job not found'}), 404
+@app.route('/api/download', methods=['POST'])
+def api_download():
+    """Legacy endpoint for progress tracking (optional)"""
+    if yt_dlp is None:
+        return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
+
+    data = request.get_json(force=True)
+    url = (data.get('url') or '').strip()
     
-    # Include file information if job is done
-    if job.get('status') == 'done' and job_id in _downloaded_files:
-        job['files'] = _downloaded_files[job_id]
-    
-    return jsonify({'ok': True, 'job': job})
+    if not url:
+        return jsonify({'ok': False, 'error': 'URL required'}), 400
 
-
-@app.route('/api/download-file/<job_id>/<filename>')
-def download_file(job_id, filename):
-    """Serve downloaded files to users"""
-    if job_id not in _downloaded_files:
-        return jsonify({'ok': False, 'error': 'job not found'}), 404
-    
-    # Find the file in the job's downloaded files
-    file_info = None
-    for file_data in _downloaded_files[job_id]:
-        if file_data['filename'] == filename:
-            file_info = file_data
-            break
-    
-    if not file_info:
-        return jsonify({'ok': False, 'error': 'file not found'}), 404
-    
-    file_path = Path(file_info['path'])
-    if not file_path.exists():
-        return jsonify({'ok': False, 'error': 'file not found on server'}), 404
-    
-    # Serve the file for download
-    return send_file(
-        file_path,
-        as_attachment=True,
-        download_name=filename,
-        mimetype='application/octet-stream'
-    )
-
-
-@app.route('/api/list-files/<job_id>')
-def list_files(job_id):
-    """List all files for a completed job"""
-    if job_id not in _downloaded_files:
-        return jsonify({'ok': False, 'error': 'job not found'}), 404
-    
-    return jsonify({
-        'ok': True, 
-        'files': _downloaded_files[job_id]
-    })
+    # For direct download, we don't need job tracking
+    return jsonify({'ok': True, 'message': 'Use direct-download endpoint for immediate download'})
 
 
 @app.route('/')
