@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🎬✨ Video Downloader</title>
+  <style>
+    :root{
+      --bg:#ffffff;--panel:#ffffff;--panel-2:#f8fbff;--text:#111827;--muted:#64748b;--accent:#06b6d4;--primary:#2563eb;--danger:#ef4444;
+      --ring:#93c5fd;--border:#e5e7eb;--yellow:#f59e0b;--green:#10b981;--red:#ef4444;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);color:var(--text);font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif}
+    .wrap{max-width:980px;margin:28px auto;padding:0 18px}
+    .title{display:flex;align-items:center;gap:12px;letter-spacing:.3px;color:var(--primary)}
+    .sparkle{filter:drop-shadow(0 0 6px rgba(37,99,235,.35));animation:twinkle 2.2s ease-in-out infinite}
+    .card{background:linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);border:1px solid var(--border);border-radius:16px;padding:18px;margin:16px 0;box-shadow:0 10px 30px rgba(17,24,39,.08);transition:.25s transform,.25s box-shadow}
+    .card:hover{transform:translateY(-2px);box-shadow:0 14px 38px rgba(17,24,39,.12)}
+    label{display:block;margin:6px 0;color:var(--muted);font-size:.95rem}
+    input,select{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:#ffffff;color:var(--text);outline:none;transition:border-color .15s, box-shadow .15s}
+    input:focus,select:focus{border-color:var(--ring);box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .row>*{flex:1}
+    .btn{display:inline-flex;align-items:center;gap:10px;background:linear-gradient(135deg, var(--primary) 0%, #60a5fa 100%);border:none;color:#ffffff;padding:12px 18px;border-radius:999px;cursor:pointer;font-weight:700;letter-spacing:.3px;box-shadow:0 10px 20px rgba(37,99,235,.25);transition:transform .12s, box-shadow .12s, filter .12s}
+    .btn:hover{transform:translateY(-1px);box-shadow:0 12px 26px rgba(37,99,235,.35);filter:saturate(1.05)}
+    .btn:active{transform:translateY(0);box-shadow:0 8px 16px rgba(37,99,235,.2)}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+    .toolbar{display:flex;gap:12px;flex-wrap:wrap}
+    .progress{height:12px;background:#f1f5f9;border:1px solid var(--border);border-radius:999px;overflow:hidden;position:relative}
+    .progress::before{content:"";position:absolute;inset:0; background:linear-gradient(90deg, rgba(99,102,241,.08), rgba(6,182,212,.08));filter:blur(10px)}
+    .bar{height:100%;width:0;background:repeating-linear-gradient(45deg, #3b82f6 0 12px, #60a5fa 12px 24px);animation:progress-move 1.2s linear infinite;box-shadow:0 0 14px rgba(37,99,235,.25) inset, 0 0 10px rgba(37,99,235,.18)}
+    .msg{margin-top:10px;color:var(--muted);transition:color .2s ease}
+    .msg--primary{color:var(--primary)}
+    .msg--green{color:var(--green)}
+    .msg--red{color:var(--red)}
+    .msg--yellow{color:var(--yellow)}
+    .pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#f8fafc;border:1px solid var(--border);color:#334155;transition:background .2s ease, color .2s ease, border-color .2s ease}
+    .pill--primary{background:rgba(37,99,235,.1);border-color:rgba(37,99,235,.25);color:#1d4ed8}
+    .pill--green{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.25);color:#047857}
+    .pill--red{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.25);color:#b91c1c}
+    .pill--yellow{background:rgba(245,158,11,.14);border-color:rgba(245,158,11,.25);color:#b45309}
+    .hint{font-size:.9rem;color:var(--muted)}
+    pre{white-space:pre-wrap;word-wrap:break-word;margin:0;font-size:.95rem}
+    .badge{display:inline-flex;align-items:center;gap:6px;background:rgba(37,99,235,.1);color:#1d4ed8;border:1px solid rgba(37,99,235,.25);padding:6px 10px;border-radius:999px}
+    .adv-toggle{display:flex;align-items:center;gap:10px;cursor:pointer;color:#1d4ed8;margin-top:12px}
+    .adv{display:none;margin-top:12px}
+    .adv.open{display:block;animation:fade .2s ease-in}
+    @keyframes fade{from{opacity:.5;transform:translateY(-2px)}to{opacity:1;transform:none}}
+    @keyframes progress-move{0%{background-position:0 0}100%{background-position:24px 0}}
+    @keyframes twinkle{0%,100%{transform:translateY(0);opacity:1}50%{transform:translateY(-1px);opacity:.8}}
+
+    /* Section artistry: three vivid themed cards with animated gradient glows */
+    .card{position:relative;overflow:hidden}
+    .card>*{position:relative;z-index:1}
+    .card::before{
+      content:"";position:absolute;inset:-2px;border-radius:18px;z-index:0;opacity:.75;filter:blur(14px);
+      background:var(--card-glow, linear-gradient(90deg, transparent, transparent));
+      animation:spin 14s linear infinite;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* Blue (primary) section */
+    .card--blue{--card-bg-1:#ffffff;--card-bg-2:#f3f7ff;
+      background:linear-gradient(180deg, var(--card-bg-1) 0%, var(--card-bg-2) 100%);
+      box-shadow:0 10px 30px rgba(37,99,235,.12);
+      --card-glow:conic-gradient(from 0deg at 50% 50%, rgba(37,99,235,.35), rgba(6,182,212,.25), rgba(99,102,241,.25), rgba(37,99,235,.35));
+    }
+    .card--blue:hover{box-shadow:0 16px 44px rgba(37,99,235,.18)}
+
+    /* Amber (yellow) section */
+    .card--amber{--card-bg-1:#fffdf7;--card-bg-2:#fff7e6;
+      background:linear-gradient(180deg, var(--card-bg-1) 0%, var(--card-bg-2) 100%);
+      box-shadow:0 10px 30px rgba(245,158,11,.14);
+      --card-glow:conic-gradient(from 0deg at 50% 50%, rgba(245,158,11,.35), rgba(251,191,36,.25), rgba(253,186,116,.25), rgba(245,158,11,.35));
+    }
+    .card--amber:hover{box-shadow:0 16px 44px rgba(245,158,11,.2)}
+
+    /* Emerald (green) section */
+    .card--green{--card-bg-1:#f7fffb;--card-bg-2:#e9fff4;
+      background:linear-gradient(180deg, var(--card-bg-1) 0%, var(--card-bg-2) 100%);
+      box-shadow:0 10px 30px rgba(16,185,129,.14);
+      --card-glow:conic-gradient(from 0deg at 50% 50%, rgba(16,185,129,.35), rgba(34,197,94,.25), rgba(20,184,166,.25), rgba(16,185,129,.35));
+    }
+    .card--green:hover{box-shadow:0 16px 44px rgba(16,185,129,.2)}
+
+    /* Subtle floating sparkles inside each section */
+    .card::after{
+      content:""; position:absolute; inset:0; pointer-events:none; z-index:0;
+      background:
+        radial-gradient(12px 12px at 12% 18%, rgba(255,255,255,.7), transparent 60%),
+        radial-gradient(10px 10px at 88% 26%, rgba(255,255,255,.55), transparent 60%),
+        radial-gradient(8px 8px at 30% 78%, rgba(255,255,255,.4), transparent 60%);
+      opacity:.35; mix-blend-mode:overlay; animation:floaty 8s ease-in-out infinite;
+    }
+    @keyframes floaty{
+      0%,100%{transform:translate3d(0,0,0)}
+      50%{transform:translate3d(0,-4px,0)}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2 class="title">🎬 Video Downloader <span class="sparkle">✨</span></h2>
+
+    <div class="card card--blue">
+      <label>🔗 Video URL</label>
+      <input id="url" placeholder="https://..." />
+      <div class="row" style="margin-top:14px">
+        <div>
+          <label>🎚️ Quality</label>
+          <select id="quality">
+            <option>best</option>
+            <option>2160p</option>
+            <option>1440p</option>
+            <option selected>1080p</option>
+            <option>720p</option>
+            <option>480p</option>
+            <option>360p</option>
+          </select>
+        </div>
+        <div>
+          <label>💾 Save as</label>
+          <select id="outputType">
+            <option selected>mp4</option>
+            <option>mp3</option>
+          </select>
+        </div>
+        <div>
+          <label>🎧 MP3 bitrate</label>
+          <select id="mp3Bitrate">
+            <option>128</option>
+            <option>160</option>
+            <option selected>192</option>
+            <option>256</option>
+            <option>320</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card--amber">
+      <div class="row">
+        <div>
+          <label>📁 Output folder (server)</label>
+          <input id="outputDir" placeholder="downloads" value="downloads" />
+          <div class="hint" style="margin-top:6px">Files save on the machine running the server.</div>
+        </div>
+      </div>
+      <div style="margin-top:14px" class="toolbar">
+        <button class="btn" id="btnStart">🚀 Start download</button>
+        <button class="btn btn-ghost" id="btnStatus">🔄 Check status</button>
+        <span class="pill" id="statusPillWrap">Status: <span id="statusPill">Idle</span></span>
+      </div>
+      <div style="margin-top:14px" class="progress"><div class="bar" id="bar"></div></div>
+      <div id="msg" class="msg"></div>
+      <div class="row" style="margin-top:6px">
+        <span class="pill">Total: <span id="totalSize">?</span></span>
+        <span class="pill">Downloaded: <span id="dlSize">0</span></span>
+        <span class="pill">Speed: <span id="speed">0</span></span>
+        <span class="pill">ETA: <span id="eta">--</span></span>
+      </div>
+      <div class="adv-toggle" id="advToggle">⚙️ Advanced options</div>
+      <div class="adv" id="advBox">
+        <div class="row">
+          <div>
+            <label>🧭 Referer</label>
+            <input id="referer" placeholder="https://page-where-video-plays (optional)" />
+          </div>
+          <div>
+            <label>🧑‍💻 User-Agent</label>
+            <input id="userAgent" placeholder="Paste your browser User-Agent (optional)" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <div>
+            <label>🧩 Extra headers (Key: Value; Key2: Value2)</label>
+            <input id="extraHeaders" placeholder="Origin: https://example.com; Cookie: name=value" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card card--green">
+      <div class="row" style="align-items:center;justify-content:space-between">
+        <label style="margin:0">🧾 Log</label>
+        <span style="display:flex;gap:10px;align-items:center">
+          <span class="badge">💡 Tip: Keep this page open during download</span>
+          <button class="btn btn-ghost" id="btnClearLog">🧹 Clear</button>
+          <button class="btn btn-ghost" id="btnCopyStatus">📋 Copy status</button>
+        </span>
+      </div>
+      <pre id="log" style="margin-top:10px"></pre>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id)=>document.getElementById(id);
+    let jobId = null;
+
+    function setStatus(text){
+      $('statusPill').textContent = text;
+      const wrap = $('statusPillWrap');
+      if(wrap){
+        wrap.classList.remove('pill--primary','pill--green','pill--red','pill--yellow');
+        const t = (text||'').toLowerCase();
+        if(t.includes('error')) wrap.classList.add('pill--red');
+        else if(t.includes('done') || t.includes('complete')) wrap.classList.add('pill--green');
+        else if(t.includes('start') || t.includes('run') || t.includes('progress')) wrap.classList.add('pill--primary');
+        else if(t.includes('warning')) wrap.classList.add('pill--yellow');
+      }
+    }
+
+    async function start(){
+      $('btnStart').disabled = true;
+      setStatus('Starting');
+      $('msg').className = 'msg msg--primary';
+      $('msg').textContent = '⏳ Starting...';
+      $('bar').style.width = '0%';
+      const body = {
+        url: $('url').value.trim(),
+        quality: $('quality').value,
+        outputType: $('outputType').value,
+        mp3Bitrate: parseInt($('mp3Bitrate').value,10),
+        outputDir: $('outputDir').value.trim() || 'downloads',
+        referer: $('referer') ? $('referer').value.trim() : '',
+        userAgent: $('userAgent') ? $('userAgent').value.trim() : '',
+        headers: parseHeaders($('extraHeaders') ? $('extraHeaders').value : '')
+      };
+      if(!body.url){
+        $('msg').className = 'msg msg--yellow';
+        $('msg').textContent = '⚠️ Please enter a URL';
+        $('btnStart').disabled = false;
+        return;
+      }
+      try{
+        const res = await fetch('/api/download', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const json = await res.json();
+        if(!json.ok){
+          $('msg').className = 'msg msg--red';
+          $('msg').textContent = '❌ ' + (json.error || 'Error starting job');
+          $('btnStart').disabled = false;
+          setStatus('Error');
+          return;
+        }
+        jobId = json.jobId;
+        $('msg').textContent = '✅ Job started: ' + jobId;
+        setStatus('Running');
+        poll();
+      }catch(err){
+        $('msg').className = 'msg msg--red';
+        $('msg').textContent = '❌ Network error: ' + err;
+        $('btnStart').disabled = false;
+        setStatus('Error');
+      }
+    }
+
+    async function poll(){
+      if(!jobId) return;
+      try{
+        const res = await fetch('/api/status/'+jobId);
+        const json = await res.json();
+        if(!json.ok){
+          $('msg').className = 'msg msg--red';
+          $('msg').textContent = '❌ ' + (json.error || 'Status error');
+          $('btnStart').disabled = false;
+          setStatus('Error');
+          return;
+        }
+        const job = json.job;
+        $('bar').style.width = (job.progress||0) + '%';
+        $('msg').textContent = '📦 ' + (job.status||'') + ' - ' + (job.message||'');
+        // Color message by status
+        const s = (job.status||'').toLowerCase();
+        if(s.includes('error')) $('msg').className = 'msg msg--red';
+        else if(s.includes('done') || s.includes('complete')) $('msg').className = 'msg msg--green';
+        else if(s.includes('warning')) $('msg').className = 'msg msg--yellow';
+        else $('msg').className = 'msg msg--primary';
+        setStatus((job.status||'').toUpperCase());
+        // Metrics display
+        $('totalSize').textContent = humanSize(job.totalBytes||0);
+        $('dlSize').textContent = humanSize(job.downloadedBytes||0);
+        $('speed').textContent = humanSize(job.speedBps||0) + '/s';
+        $('eta').textContent = humanEta(job.etaSec||0);
+        if(job.status === 'done' || job.status === 'error'){
+          $('btnStart').disabled = false;
+          const line = `[${new Date().toLocaleTimeString()}] ${job.status.toUpperCase()}: ${job.message||''}\n`;
+          $('log').textContent += line;
+          return;
+        }
+        setTimeout(poll, 1000);
+      }catch(err){
+        $('msg').className = 'msg msg--red';
+        $('msg').textContent = '❌ Poll error: ' + err;
+        $('btnStart').disabled = false;
+        setStatus('Error');
+      }
+    }
+
+    function parseHeaders(raw){
+      const out = {};
+      if(!raw) return out;
+      try{
+        const parts = raw.split(';');
+        for(const p of parts){
+          const s = p.trim();
+          if(!s) continue;
+          const idx = s.indexOf(':');
+          if(idx>0){ const k=s.slice(0,idx).trim(); const v=s.slice(idx+1).trim(); if(k) out[k]=v; }
+        }
+      }catch(e){ console.warn('Header parse error', e); }
+      return out;
+    }
+
+    function humanSize(b){
+      const u=['B','KB','MB','GB','TB'];
+      let s = Number(b||0); let i=0; while(s>=1024 && i<u.length-1){s/=1024;i++;}
+      return (i===0? s.toString(): s.toFixed(1))+' '+u[i];
+    }
+    function humanEta(sec){
+      const s = Number(sec||0); if(!s) return '--';
+      const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60;
+      if(h) return `${h}h ${m}m ${ss}s`;
+      if(m) return `${m}m ${ss}s`;
+      return `${ss}s`;
+    }
+
+    $('btnStart').addEventListener('click', start);
+    $('btnStatus').addEventListener('click', poll);
+    const advToggle = $('advToggle');
+    if(advToggle){
+      advToggle.addEventListener('click', ()=>{
+        const box = $('advBox');
+        box.classList.toggle('open');
+        advToggle.textContent = box.classList.contains('open') ? '⚙️ Advanced options (hide)' : '⚙️ Advanced options';
+      });
+    }
+    const btnClearLog = $('btnClearLog');
+    if(btnClearLog){ btnClearLog.addEventListener('click', ()=>{ $('log').textContent=''; }); }
+    const btnCopyStatus = $('btnCopyStatus');
+    if(btnCopyStatus){ btnCopyStatus.addEventListener('click', async ()=>{
+      try{ await navigator.clipboard.writeText($('msg').textContent || ''); $('msg').textContent='📋 Status copied'; }
+      catch(e){ $('msg').textContent='❌ Could not copy'; }
+    }); }
+  </script>
+</body>
+</html>
+
+
