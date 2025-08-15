@@ -229,31 +229,40 @@
       }
 
       try{
-        // Create a form to submit the data
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/api/direct-download';
-        form.target = '_blank'; // Open in new tab/window
+        // Send data as JSON using fetch
+        const response = await fetch('/api/direct-download', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body)
+        });
         
-        // Add the data as hidden fields
-        const data = JSON.stringify(body);
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'data';
-        input.value = data;
-        form.appendChild(input);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
         
-        // Add content type header
-        const contentTypeInput = document.createElement('input');
-        contentTypeInput.type = 'hidden';
-        contentTypeInput.name = 'Content-Type';
-        contentTypeInput.value = 'application/json';
-        form.appendChild(contentTypeInput);
+        // Get the filename from response headers
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'video.mp4';
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename="(.+)"/);
+          if (match) {
+            filename = match[1];
+          }
+        }
         
-        // Submit the form
-        document.body.appendChild(form);
-        form.submit();
-        document.body.removeChild(form);
+        // Create a blob and download it
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
         
         $('msg').className = 'msg msg--green';
         $('msg').textContent = '✅ Download started! Check your browser for the download prompt.';
@@ -303,5 +312,3 @@
   </script>
 </body>
 </html>
-
-
