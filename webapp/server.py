@@ -1,20 +1,24 @@
 import os
+import threading
+import time
+import json
 import re
-import subprocess
 from pathlib import Path
 from typing import Optional
-from flask import Flask, request, jsonify, send_from_directory, Response
+import tempfile
+import shutil
+
+from flask import Flask, request, jsonify, send_from_directory, send_file, Response, stream_template
 from flask_cors import CORS
 
 try:
     import yt_dlp
-except Exception:
+except Exception as e:
     yt_dlp = None
 
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
-# ===== Helper Functions =====
 def build_format_string(max_height: str) -> str:
     if max_height == 'best':
         return 'bestvideo+bestaudio/best'
@@ -28,27 +32,64 @@ def build_format_string(max_height: str) -> str:
         f"best[height<={h}]"
     )
 
-def build_opts(quality: str, output_type: str, mp3_bitrate: int,
+
+def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: int,
                referer: Optional[str] = None, user_agent: Optional[str] = None,
                extra_headers: Optional[dict] = None) -> dict:
     fmt = build_format_string(quality)
+    output_dir.mkdir(parents=True, exist_ok=True)
     opts = {
         'format': fmt,
+        'outtmpl': str(output_dir / '%(title)s [%(id)s].%(ext)s'),
         'noplaylist': True,
+        'progress': True,
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
+        'extractor_retries': 5,
+        'fragment_retries': 5,
+        'retries': 5,
+        'socket_timeout': 60,
+        'extractor_timeout': 60,
+        'sleep_interval': 2,
+        'max_sleep_interval': 10,
+        'ignoreerrors': False,
+        'no_check_certificate': True,
+        'prefer_insecure': True,
+        'http_chunk_size': 10485760,  # 10MB chunks
     }
-    headers = {}
-    if user_agent:
-        headers['User-Agent'] = user_agent
+    
+    # Advanced headers to bypass 403 errors
+    headers = {
+        'User-Agent': user_agent or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+    }
+    
     if referer:
         headers['Referer'] = referer
     if extra_headers:
         headers.update(extra_headers)
-    if headers:
-        opts['http_headers'] = headers
-
+    
+    opts['http_headers'] = headers
+    
+    # Add cookies and additional bypass options
+    opts['cookiesfrombrowser'] = None
+    opts['cookiefile'] = None
+    
+    # Post-processing
     if output_type == 'mp3':
         opts['format'] = 'bestaudio/best'
         opts['postprocessors'] = [{
@@ -58,22 +99,22 @@ def build_opts(quality: str, output_type: str, mp3_bitrate: int,
         }]
     elif output_type == 'mp4':
         opts['merge_output_format'] = 'mp4'
-
+        opts['postprocessors'] = [{
+            'key': 'FFmpegVideoRemuxer',
+            'preferedformat': 'mp4',
+        }]
     return opts
 
-# ===== Direct Streaming Download =====
-@app.route('/api/direct-download', methods=['GET', 'POST'])
+
+@app.route('/api/direct-download', methods=['POST'])
 def direct_download():
-    """Stream file directly to user's browser without saving to server"""
+    """Direct download endpoint that streams the file to user's browser"""
     try:
         if yt_dlp is None:
             return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
 
-        # Accept GET query params or POST JSON
-        if request.method == 'GET':
-            data = request.args.to_dict()
-        else:
-            data = request.get_json(force=True)
+        # Get JSON data
+        data = request.get_json(force=True)
 
         url = (data.get('url') or '').strip()
         quality = (data.get('quality') or 'best').strip()
@@ -86,72 +127,133 @@ def direct_download():
         if not url:
             return jsonify({'ok': False, 'error': 'URL required'}), 400
 
-        # Get video info for filename
-        ydl_info_opts = build_opts(quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
-        ydl_info_opts['skip_download'] = True
-        with yt_dlp.YoutubeDL(ydl_info_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        filename = f"{info.get('title', 'video')} [{info.get('id', 'unknown')}].{output_type}"
+        # Create temporary directory for this download
+        temp_dir = Path(tempfile.mkdtemp())
+        
+        try:
+            opts = build_opts(temp_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
+            
+            # Download the file with fallback options
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                try:
+                    # Get video info first
+                    info = ydl.extract_info(url, download=False)
+                    video_title = info.get('title', 'video')
+                    video_id = info.get('id', 'unknown')
+                    
+                    # Download the file
+                    ydl.download([url])
+                except Exception as download_error:
+                    print(f"First attempt failed: {download_error}")
+                    
+                    # Try with different format if first attempt fails
+                    if '403' in str(download_error) or 'Forbidden' in str(download_error):
+                        print("Trying with different format...")
+                        opts['format'] = 'best'  # Fallback to best quality
+                        with yt_dlp.YoutubeDL(opts) as ydl2:
+                            ydl2.download([url])
+                    else:
+                        raise download_error
+                
+                # Find the downloaded file
+                downloaded_files = list(temp_dir.glob('*'))
+                if not downloaded_files:
+                    return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
+                
+                file_path = downloaded_files[0]
+                filename = file_path.name
+                
+                # Sanitize filename to remove problematic characters
+                filename = re.sub(r'[^\w\-_\.]', '_', filename)
+                # Ensure it's not too long
+                if len(filename) > 100:
+                    name, ext = os.path.splitext(filename)
+                    filename = name[:90] + ext
+                # Ensure it starts with a safe character
+                if filename and not filename[0].isalnum():
+                    filename = 'video_' + filename
+                
+                # Copy file to a permanent location before serving
+                import tempfile as tf
+                permanent_file = tf.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1])
+                permanent_file.close()
+                
+                # Copy the downloaded file to permanent location
+                shutil.copy2(file_path, permanent_file.name)
+                
+                # Clean up the temporary directory immediately
+                try:
+                    shutil.rmtree(temp_dir)
+                    print(f"Cleaned up temp directory: {temp_dir}")
+                except Exception as e:
+                    print(f"Error cleaning up {temp_dir}: {e}")
+                
+                # Serve the permanent file
+                response = send_file(
+                    permanent_file.name,
+                    as_attachment=True,
+                    download_name=filename,
+                    mimetype='application/octet-stream'
+                )
+                
+                # Clean up permanent file after response
+                @response.call_on_close
+                def cleanup():
+                    try:
+                        os.unlink(permanent_file.name)
+                        print(f"Cleaned up permanent file: {permanent_file.name}")
+                    except Exception as e:
+                        print(f"Error cleaning up {permanent_file.name}: {e}")
+                
+                return response
+                
+        except Exception as e:
+            # Clean up on error
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+            print(f"Error in direct_download: {str(e)}")
+            return jsonify({'ok': False, 'error': str(e)}), 500
+            
+    except Exception as outer_e:
+        print(f"Outer error in direct_download: {str(outer_e)}")
+        return jsonify({'ok': False, 'error': f'Server error: {str(outer_e)}'}), 500
 
-        # Clean filename
-        filename = re.sub(r'[^\w\-_\.]', '_', filename)
-        if len(filename) > 100:
-            name, ext = os.path.splitext(filename)
-            filename = name[:90] + ext
 
-        def generate():
-            """Yield video chunks from yt-dlp in real-time"""
-            fmt = build_format_string(quality)
-            cmd = ['yt-dlp', '-o', '-', '-f', fmt, url]
-            if output_type == 'mp3':
-                cmd.extend(['--extract-audio', '--audio-format', 'mp3', '--audio-quality', str(mp3_bitrate)])
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            for chunk in iter(lambda: proc.stdout.read(8192), b''):
-                yield chunk
-            proc.stdout.close()
-            proc.wait()
-
-        # Set MIME type
-        mime_type = 'application/octet-stream'
-        if filename.endswith('.mp4'):
-            mime_type = 'video/mp4'
-        elif filename.endswith('.mp3'):
-            mime_type = 'audio/mpeg'
-        elif filename.endswith('.webm'):
-            mime_type = 'video/webm'
-
-        return Response(
-            generate(),
-            mimetype=mime_type,
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': mime_type
-            }
-        )
-
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-# ===== Legacy Endpoint =====
 @app.route('/api/download', methods=['POST'])
 def api_download():
-    """Legacy endpoint for progress tracking"""
+    """Legacy endpoint for progress tracking (optional)"""
+    if yt_dlp is None:
+        return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
+
+    data = request.get_json(force=True)
+    url = (data.get('url') or '').strip()
+    
+    if not url:
+        return jsonify({'ok': False, 'error': 'URL required'}), 400
+
+    # For direct download, we don't need job tracking
     return jsonify({'ok': True, 'message': 'Use direct-download endpoint for immediate download'})
 
-# ===== Frontend =====
+
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
-# ===== Test Endpoint =====
+
 @app.route('/api/test')
 def test():
+    """Test endpoint to check if server is working"""
     return jsonify({
-        'ok': True,
+        'ok': True, 
         'message': 'Server is working',
         'yt_dlp_available': yt_dlp is not None
     })
 
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
+
