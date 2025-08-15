@@ -142,30 +142,15 @@
     <div class="card card--amber">
       <div class="row">
         <div>
-          <label>📁 Output folder (server)</label>
-          <input id="outputDir" placeholder="downloads" value="downloads" />
-          <div class="hint" style="margin-top:6px">Files save on the machine running the server.</div>
+          <label>📁 Download Location</label>
+          <div class="hint" style="margin-top:6px">Your browser will ask where to save the file</div>
         </div>
       </div>
       <div style="margin-top:14px" class="toolbar">
-        <button class="btn" id="btnStart">🚀 Start download</button>
-        <button class="btn btn-ghost" id="btnStatus">🔄 Check status</button>
-        <span class="pill" id="statusPillWrap">Status: <span id="statusPill">Idle</span></span>
+        <button class="btn" id="btnStart">🚀 Download Now</button>
+        <span class="pill" id="statusPillWrap">Status: <span id="statusPill">Ready</span></span>
       </div>
-      <div style="margin-top:14px" class="progress"><div class="bar" id="bar"></div></div>
-      <div id="msg" class="msg"></div>
-      <div class="row" style="margin-top:6px">
-        <span class="pill">Total: <span id="totalSize">?</span></span>
-        <span class="pill">Downloaded: <span id="dlSize">0</span></span>
-        <span class="pill">Speed: <span id="speed">0</span></span>
-        <span class="pill">ETA: <span id="eta">--</span></span>
-      </div>
-      
-      <!-- Download Files Section -->
-      <div id="downloadSection" style="display: none; margin-top: 16px;">
-        <h4>📁 Download Files</h4>
-        <div id="downloadButtons"></div>
-      </div>
+      <div id="msg" class="msg">Enter a video URL and click Download Now</div>
       <div class="adv-toggle" id="advToggle">⚙️ Advanced options</div>
       <div class="adv" id="advBox">
         <div class="row">
@@ -189,20 +174,23 @@
 
     <div class="card card--green">
       <div class="row" style="align-items:center;justify-content:space-between">
-        <label style="margin:0">🧾 Log</label>
+        <label style="margin:0">💡 How it works</label>
         <span style="display:flex;gap:10px;align-items:center">
-          <span class="badge">💡 Tip: Keep this page open during download</span>
-          <button class="btn btn-ghost" id="btnClearLog">🧹 Clear</button>
-          <button class="btn btn-ghost" id="btnCopyStatus">📋 Copy status</button>
+          <span class="badge">✨ Direct Download</span>
         </span>
       </div>
-      <pre id="log" style="margin-top:10px"></pre>
+      <div style="margin-top:10px; line-height: 1.6;">
+        <p><strong>1.</strong> Enter a video URL (YouTube, Vimeo, etc.)</p>
+        <p><strong>2.</strong> Choose quality and format (MP4/MP3)</p>
+        <p><strong>3.</strong> Click "Download Now"</p>
+        <p><strong>4.</strong> Your browser will ask where to save the file</p>
+        <p><strong>5.</strong> File downloads directly to your computer!</p>
+      </div>
     </div>
   </div>
 
   <script>
     const $ = (id)=>document.getElementById(id);
-    let jobId = null;
 
     function setStatus(text){
       $('statusPill').textContent = text;
@@ -212,98 +200,76 @@
         const t = (text||'').toLowerCase();
         if(t.includes('error')) wrap.classList.add('pill--red');
         else if(t.includes('done') || t.includes('complete')) wrap.classList.add('pill--green');
-        else if(t.includes('start') || t.includes('run') || t.includes('progress')) wrap.classList.add('pill--primary');
+        else if(t.includes('download') || t.includes('start')) wrap.classList.add('pill--primary');
         else if(t.includes('warning')) wrap.classList.add('pill--yellow');
       }
     }
 
-    async function start(){
+    async function startDownload(){
       $('btnStart').disabled = true;
       setStatus('Starting');
       $('msg').className = 'msg msg--primary';
-      $('msg').textContent = '⏳ Starting...';
-      $('bar').style.width = '0%';
+      $('msg').textContent = '⏳ Starting download...';
+      
       const body = {
         url: $('url').value.trim(),
         quality: $('quality').value,
         outputType: $('outputType').value,
         mp3Bitrate: parseInt($('mp3Bitrate').value,10),
-        outputDir: $('outputDir').value.trim() || 'downloads',
         referer: $('referer') ? $('referer').value.trim() : '',
         userAgent: $('userAgent') ? $('userAgent').value.trim() : '',
         headers: parseHeaders($('extraHeaders') ? $('extraHeaders').value : '')
       };
+      
       if(!body.url){
         $('msg').className = 'msg msg--yellow';
         $('msg').textContent = '⚠️ Please enter a URL';
         $('btnStart').disabled = false;
         return;
       }
-      try{
-        const res = await fetch('/api/download', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-        const json = await res.json();
-        if(!json.ok){
-          $('msg').className = 'msg msg--red';
-          $('msg').textContent = '❌ ' + (json.error || 'Error starting job');
-          $('btnStart').disabled = false;
-          setStatus('Error');
-          return;
-        }
-        jobId = json.jobId;
-        $('msg').textContent = '✅ Job started: ' + jobId;
-        setStatus('Running');
-        poll();
-      }catch(err){
-        $('msg').className = 'msg msg--red';
-        $('msg').textContent = '❌ Network error: ' + err;
-        $('btnStart').disabled = false;
-        setStatus('Error');
-      }
-    }
 
-    async function poll(){
-      if(!jobId) return;
       try{
-        const res = await fetch('/api/status/'+jobId);
-        const json = await res.json();
-        if(!json.ok){
-          $('msg').className = 'msg msg--red';
-          $('msg').textContent = '❌ ' + (json.error || 'Status error');
+        // Create a form to submit the data
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/api/direct-download';
+        form.target = '_blank'; // Open in new tab/window
+        
+        // Add the data as hidden fields
+        const data = JSON.stringify(body);
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'data';
+        input.value = data;
+        form.appendChild(input);
+        
+        // Add content type header
+        const contentTypeInput = document.createElement('input');
+        contentTypeInput.type = 'hidden';
+        contentTypeInput.name = 'Content-Type';
+        contentTypeInput.value = 'application/json';
+        form.appendChild(contentTypeInput);
+        
+        // Submit the form
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+        
+        $('msg').className = 'msg msg--green';
+        $('msg').textContent = '✅ Download started! Check your browser for the download prompt.';
+        setStatus('Downloading');
+        
+        // Reset after a few seconds
+        setTimeout(() => {
           $('btnStart').disabled = false;
-          setStatus('Error');
-          return;
-        }
-        const job = json.job;
-        $('bar').style.width = (job.progress||0) + '%';
-        $('msg').textContent = '📦 ' + (job.status||'') + ' - ' + (job.message||'');
-        // Color message by status
-        const s = (job.status||'').toLowerCase();
-        if(s.includes('error')) $('msg').className = 'msg msg--red';
-        else if(s.includes('done') || s.includes('complete')) $('msg').className = 'msg msg--green';
-        else if(s.includes('warning')) $('msg').className = 'msg msg--yellow';
-        else $('msg').className = 'msg msg--primary';
-        setStatus((job.status||'').toUpperCase());
-        // Metrics display
-        $('totalSize').textContent = humanSize(job.totalBytes||0);
-        $('dlSize').textContent = humanSize(job.downloadedBytes||0);
-        $('speed').textContent = humanSize(job.speedBps||0) + '/s';
-        $('eta').textContent = humanEta(job.etaSec||0);
-        if(job.status === 'done' || job.status === 'error'){
-          $('btnStart').disabled = false;
-          const line = `[${new Date().toLocaleTimeString()}] ${job.status.toUpperCase()}: ${job.message||''}\n`;
-          $('log').textContent += line;
-          
-          // Show download buttons if files are available
-          if(job.status === 'done' && job.files && job.files.length > 0){
-            showDownloadButtons(job.files, jobId);
-          }
-          
-          return;
-        }
-        setTimeout(poll, 1000);
+          setStatus('Ready');
+          $('msg').textContent = 'Enter a video URL and click Download Now';
+          $('msg').className = 'msg';
+        }, 3000);
+        
       }catch(err){
         $('msg').className = 'msg msg--red';
-        $('msg').textContent = '❌ Poll error: ' + err;
+        $('msg').textContent = '❌ Error: ' + err;
         $('btnStart').disabled = false;
         setStatus('Error');
       }
@@ -324,41 +290,8 @@
       return out;
     }
 
-    function humanSize(b){
-      const u=['B','KB','MB','GB','TB'];
-      let s = Number(b||0); let i=0; while(s>=1024 && i<u.length-1){s/=1024;i++;}
-      return (i===0? s.toString(): s.toFixed(1))+' '+u[i];
-    }
-    function humanEta(sec){
-      const s = Number(sec||0); if(!s) return '--';
-      const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60;
-      if(h) return `${h}h ${m}m ${ss}s`;
-      if(m) return `${m}m ${ss}s`;
-      return `${ss}s`;
-    }
-
-    function showDownloadButtons(files, jobId){
-      const downloadSection = $('downloadSection');
-      const downloadButtons = $('downloadButtons');
-      
-      downloadButtons.innerHTML = '';
-      
-      files.forEach(file => {
-        const button = document.createElement('button');
-        button.className = 'btn';
-        button.style.margin = '4px';
-        button.innerHTML = `⬇️ ${file.filename} (${humanSize(file.size)})`;
-        button.onclick = () => {
-          window.open(`/api/download-file/${jobId}/${encodeURIComponent(file.filename)}`, '_blank');
-        };
-        downloadButtons.appendChild(button);
-      });
-      
-      downloadSection.style.display = 'block';
-    }
-
-    $('btnStart').addEventListener('click', start);
-    $('btnStatus').addEventListener('click', poll);
+    $('btnStart').addEventListener('click', startDownload);
+    
     const advToggle = $('advToggle');
     if(advToggle){
       advToggle.addEventListener('click', ()=>{
@@ -367,13 +300,6 @@
         advToggle.textContent = box.classList.contains('open') ? '⚙️ Advanced options (hide)' : '⚙️ Advanced options';
       });
     }
-    const btnClearLog = $('btnClearLog');
-    if(btnClearLog){ btnClearLog.addEventListener('click', ()=>{ $('log').textContent=''; }); }
-    const btnCopyStatus = $('btnCopyStatus');
-    if(btnCopyStatus){ btnCopyStatus.addEventListener('click', async ()=>{
-      try{ await navigator.clipboard.writeText($('msg').textContent || ''); $('msg').textContent='📋 Status copied'; }
-      catch(e){ $('msg').textContent='❌ Could not copy'; }
-    }); }
   </script>
 </body>
 </html>
