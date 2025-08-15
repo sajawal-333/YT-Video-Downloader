@@ -1,11 +1,11 @@
 import os
 import re
 import tempfile
+import shutil
 from pathlib import Path
 from typing import Optional
-import shutil
 
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 
 try:
@@ -95,53 +95,50 @@ def direct_download():
         referer = (data.get('referer') or '').strip() or None
         user_agent = (data.get('userAgent') or '').strip() or None
         extra_headers = data.get('headers') or {}
-        save_path_str = (data.get('savePath') or '').strip()
 
         if not url:
             return jsonify({'ok': False, 'error': 'URL required'}), 400
 
-        # Use user-provided path or temp dir
-        if save_path_str:
-            save_dir = Path(save_path_str).expanduser().resolve()
-            save_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            save_dir = Path(tempfile.mkdtemp())
-
-        opts = build_opts(save_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
+        # Temporary folder for download
+        temp_dir = Path(tempfile.mkdtemp())
 
         try:
+            opts = build_opts(temp_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 downloaded_file = Path(ydl.prepare_filename(info))
+
+            if not downloaded_file.exists():
+                return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
+
+            # Clean filename
+            filename = re.sub(r'[^\w\-_\.]', '_', downloaded_file.name)
+
+            # Stream file to browser
+            response = send_file(
+                downloaded_file,
+                as_attachment=True,
+                download_name=filename,
+                mimetype='application/octet-stream'
+            )
+
+            # Delete temp files after sending
+            @response.call_on_close
+            def cleanup():
+                try:
+                    shutil.rmtree(temp_dir)
+                    print(f"Deleted temp folder: {temp_dir}")
+                except Exception as e:
+                    print(f"Cleanup error: {e}")
+
+            return response
+
         except Exception as e:
+            shutil.rmtree(temp_dir, ignore_errors=True)
             return jsonify({'ok': False, 'error': f'Download failed: {str(e)}'}), 500
-
-        if not downloaded_file.exists():
-            return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
-
-        # Sanitize filename
-        filename = re.sub(r'[^\w\-_\.]', '_', downloaded_file.name)
-
-        return send_file(
-            downloaded_file,
-            as_attachment=True,
-            download_name=filename,
-            mimetype='application/octet-stream'
-        )
 
     except Exception as e:
         return jsonify({'ok': False, 'error': f'Server error: {str(e)}'}), 500
-
-
-@app.route('/api/download', methods=['POST'])
-def api_download():
-    if yt_dlp is None:
-        return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
-    data = request.get_json(force=True)
-    url = (data.get('url') or '').strip()
-    if not url:
-        return jsonify({'ok': False, 'error': 'URL required'}), 400
-    return jsonify({'ok': True, 'message': 'Use direct-download endpoint for immediate download'})
 
 
 @app.route('/')
