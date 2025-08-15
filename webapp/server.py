@@ -1,9 +1,11 @@
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Optional
+import glob
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 
 try:
@@ -15,6 +17,32 @@ app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
 
 _jobs = {}
+_downloaded_files = {}  # Track downloaded files for each job
+
+# Cleanup old files periodically
+def cleanup_old_files():
+    """Clean up files older than 1 hour"""
+    while True:
+        try:
+            current_time = time.time()
+            downloads_dir = Path('downloads')
+            if downloads_dir.exists():
+                for file_path in downloads_dir.glob('*'):
+                    if file_path.is_file():
+                        # Remove files older than 1 hour
+                        if current_time - file_path.stat().st_mtime > 3600:
+                            try:
+                                file_path.unlink()
+                                print(f"Cleaned up old file: {file_path}")
+                            except Exception as e:
+                                print(f"Error cleaning up {file_path}: {e}")
+        except Exception as e:
+            print(f"Error in cleanup: {e}")
+        time.sleep(300)  # Run cleanup every 5 minutes
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
+cleanup_thread.start()
 
 
 def build_format_string(max_height: str) -> str:
@@ -91,6 +119,7 @@ def api_download():
 
     job_id = os.urandom(6).hex()
     _jobs[job_id] = {'status': 'queued', 'progress': 0, 'message': 'Queued'}
+    _downloaded_files[job_id] = []  # Track files for this job
 
     def worker():
         try:
@@ -120,9 +149,21 @@ def api_download():
             opts['progress_hooks'] = [hook]
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
+            
+            # Find downloaded files
+            if out_dir.exists():
+                for file_path in out_dir.glob('*'):
+                    if file_path.is_file():
+                        _downloaded_files[job_id].append({
+                            'filename': file_path.name,
+                            'size': file_path.stat().st_size,
+                            'path': str(file_path)
+                        })
+            
             _jobs[job_id]['status'] = 'done'
             _jobs[job_id]['progress'] = 100
             _jobs[job_id]['message'] = 'completed'
+            _jobs[job_id]['files'] = _downloaded_files[job_id]
         except Exception as e:
             _jobs[job_id]['status'] = 'error'
             _jobs[job_id]['message'] = str(e)
@@ -137,7 +178,53 @@ def api_status(job_id):
     job = _jobs.get(job_id)
     if not job:
         return jsonify({'ok': False, 'error': 'job not found'}), 404
+    
+    # Include file information if job is done
+    if job.get('status') == 'done' and job_id in _downloaded_files:
+        job['files'] = _downloaded_files[job_id]
+    
     return jsonify({'ok': True, 'job': job})
+
+
+@app.route('/api/download-file/<job_id>/<filename>')
+def download_file(job_id, filename):
+    """Serve downloaded files to users"""
+    if job_id not in _downloaded_files:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    
+    # Find the file in the job's downloaded files
+    file_info = None
+    for file_data in _downloaded_files[job_id]:
+        if file_data['filename'] == filename:
+            file_info = file_data
+            break
+    
+    if not file_info:
+        return jsonify({'ok': False, 'error': 'file not found'}), 404
+    
+    file_path = Path(file_info['path'])
+    if not file_path.exists():
+        return jsonify({'ok': False, 'error': 'file not found on server'}), 404
+    
+    # Serve the file for download
+    return send_file(
+        file_path,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/octet-stream'
+    )
+
+
+@app.route('/api/list-files/<job_id>')
+def list_files(job_id):
+    """List all files for a completed job"""
+    if job_id not in _downloaded_files:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    
+    return jsonify({
+        'ok': True, 
+        'files': _downloaded_files[job_id]
+    })
 
 
 @app.route('/')
