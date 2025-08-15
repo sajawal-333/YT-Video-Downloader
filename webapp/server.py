@@ -89,6 +89,15 @@ def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: in
     opts['cookiesfrombrowser'] = None
     opts['cookiefile'] = None
     
+    # Add proxy rotation for better bypass
+    import random
+    free_proxies = [
+        None,  # Direct connection
+        'socks5://127.0.0.1:1080',  # Common SOCKS proxy
+        'http://127.0.0.1:8080',    # Common HTTP proxy
+    ]
+    opts['proxy'] = random.choice(free_proxies)
+    
     # Post-processing
     if output_type == 'mp3':
         opts['format'] = 'bestaudio/best'
@@ -133,27 +142,99 @@ def direct_download():
         try:
             opts = build_opts(temp_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
             
-            # Download the file with fallback options
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                try:
-                    # Get video info first
+            # Multi-strategy download with aggressive bypass
+            download_success = False
+            last_error = None
+            
+            # Strategy 1: Original settings
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     video_title = info.get('title', 'video')
                     video_id = info.get('id', 'unknown')
-                    
-                    # Download the file
                     ydl.download([url])
-                except Exception as download_error:
-                    print(f"First attempt failed: {download_error}")
-                    
-                    # Try with different format if first attempt fails
-                    if '403' in str(download_error) or 'Forbidden' in str(download_error):
-                        print("Trying with different format...")
-                        opts['format'] = 'best'  # Fallback to best quality
-                        with yt_dlp.YoutubeDL(opts) as ydl2:
-                            ydl2.download([url])
-                    else:
-                        raise download_error
+                    download_success = True
+            except Exception as e:
+                last_error = e
+                print(f"Strategy 1 failed: {e}")
+            
+            # Strategy 2: Different format + mobile user agent
+            if not download_success:
+                try:
+                    opts2 = opts.copy()
+                    opts2['format'] = 'best'
+                    opts2['http_headers']['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1'
+                    with yt_dlp.YoutubeDL(opts2) as ydl:
+                        ydl.download([url])
+                        download_success = True
+                except Exception as e:
+                    last_error = e
+                    print(f"Strategy 2 failed: {e}")
+            
+            # Strategy 3: Minimal settings + different approach
+            if not download_success:
+                try:
+                    opts3 = {
+                        'format': 'best',
+                        'outtmpl': str(temp_dir / '%(title)s [%(id)s].%(ext)s'),
+                        'noplaylist': True,
+                        'quiet': True,
+                        'no_warnings': True,
+                        'http_headers': {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.5',
+                            'Accept-Encoding': 'gzip, deflate',
+                            'Connection': 'keep-alive',
+                        }
+                    }
+                    with yt_dlp.YoutubeDL(opts3) as ydl:
+                        ydl.download([url])
+                        download_success = True
+                except Exception as e:
+                    last_error = e
+                    print(f"Strategy 3 failed: {e}")
+            
+            # Strategy 4: Ultra-minimal approach
+            if not download_success:
+                try:
+                    opts4 = {
+                        'format': 'best',
+                        'outtmpl': str(temp_dir / '%(title)s [%(id)s].%(ext)s'),
+                        'noplaylist': True,
+                        'quiet': True,
+                        'no_warnings': True,
+                        'no_check_certificate': True,
+                        'prefer_insecure': True,
+                    }
+                    with yt_dlp.YoutubeDL(opts4) as ydl:
+                        ydl.download([url])
+                        download_success = True
+                except Exception as e:
+                    last_error = e
+                    print(f"Strategy 4 failed: {e}")
+            
+            # Strategy 5: Force specific extractor
+            if not download_success:
+                try:
+                    opts5 = {
+                        'format': 'best',
+                        'outtmpl': str(temp_dir / '%(title)s [%(id)s].%(ext)s'),
+                        'noplaylist': True,
+                        'quiet': True,
+                        'no_warnings': True,
+                        'extract_flat': False,
+                        'force_generic_extractor': True,
+                    }
+                    with yt_dlp.YoutubeDL(opts5) as ydl:
+                        ydl.download([url])
+                        download_success = True
+                except Exception as e:
+                    last_error = e
+                    print(f"Strategy 5 failed: {e}")
+            
+            if not download_success:
+                raise last_error or Exception("All download strategies failed")
                 
                 # Find the downloaded file
                 downloaded_files = list(temp_dir.glob('*'))
