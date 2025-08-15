@@ -78,16 +78,8 @@ def direct_download():
     if yt_dlp is None:
         return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
 
-    # Handle both JSON and form data
-    if request.is_json:
-        data = request.get_json(force=True)
-    else:
-        # Handle form data
-        data_str = request.form.get('data', '{}')
-        try:
-            data = json.loads(data_str)
-        except:
-            return jsonify({'ok': False, 'error': 'Invalid data format'}), 400
+    # Get JSON data
+    data = request.get_json(force=True)
 
     url = (data.get('url') or '').strip()
     quality = (data.get('quality') or 'best').strip()
@@ -164,6 +156,7 @@ def direct_download():
             shutil.rmtree(temp_dir)
         except:
             pass
+        print(f"Error in direct_download: {str(e)}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
