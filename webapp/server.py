@@ -64,6 +64,12 @@ def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: in
 
     opts['http_headers'] = headers
 
+    # ✅ NEW: Load cookies.txt if it exists
+    cookie_path = Path(__file__).parent / 'cookies.txt'
+    if cookie_path.exists():
+        opts['cookiefile'] = str(cookie_path)
+        print(f"Using cookies from: {cookie_path}")
+
     if output_type == 'mp3':
         opts['format'] = 'bestaudio/best'
         opts['postprocessors'] = [{
@@ -111,10 +117,10 @@ def direct_download():
             if not downloaded_file.exists():
                 return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
 
-            # Clean filename
+            # Sanitize filename
             filename = re.sub(r'[^\w\-_\.]', '_', downloaded_file.name)
 
-            # Stream file to browser
+            # Stream to browser
             response = send_file(
                 downloaded_file,
                 as_attachment=True,
@@ -122,7 +128,7 @@ def direct_download():
                 mimetype='application/octet-stream'
             )
 
-            # Delete temp files after sending
+            # Cleanup temp folder after sending
             @response.call_on_close
             def cleanup():
                 try:
