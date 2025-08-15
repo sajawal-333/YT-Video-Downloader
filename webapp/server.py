@@ -1,29 +1,21 @@
 import os
-import threading
-import time
-import json
 import re
+import tempfile
 from pathlib import Path
 from typing import Optional
-import tempfile
 import shutil
 
-from flask import Flask, request, jsonify, send_from_directory, send_file, Response, stream_template
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 
 try:
     import yt_dlp
-except Exception as e:
+except Exception:
     yt_dlp = None
-
-# Try alternative downloader
-try:
-    import yt_dlp as yt_dlp_alt
-except Exception as e:
-    yt_dlp_alt = None
 
 app = Flask(__name__, static_folder="static", static_url_path="/")
 CORS(app)
+
 
 def build_format_string(max_height: str) -> str:
     if max_height == 'best':
@@ -48,57 +40,30 @@ def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: in
         'format': fmt,
         'outtmpl': str(output_dir / '%(title)s [%(id)s].%(ext)s'),
         'noplaylist': True,
-        'progress': True,
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
-        'extractor_retries': 5,
-        'fragment_retries': 5,
         'retries': 5,
         'socket_timeout': 60,
         'extractor_timeout': 60,
-        'sleep_interval': 2,
-        'max_sleep_interval': 10,
-        'ignoreerrors': False,
-        'no_check_certificate': True,
-        'prefer_insecure': True,
-        'http_chunk_size': 10485760,  # 10MB chunks
     }
-    
-    # Advanced headers to bypass 403 errors
+
     headers = {
-        'User-Agent': user_agent or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'User-Agent': user_agent or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                    'Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
         'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
-        'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
     }
-    
+
     if referer:
         headers['Referer'] = referer
     if extra_headers:
         headers.update(extra_headers)
-    
+
     opts['http_headers'] = headers
-    
-    # Add cookies and additional bypass options
-    opts['cookiesfrombrowser'] = None
-    opts['cookiefile'] = None
-    
-    # Simple approach - no proxy rotation to avoid complexity
-    opts['proxy'] = None
-    
-    # Post-processing
+
     if output_type == 'mp3':
         opts['format'] = 'bestaudio/best'
         opts['postprocessors'] = [{
@@ -117,12 +82,10 @@ def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: in
 
 @app.route('/api/direct-download', methods=['POST'])
 def direct_download():
-    """Direct download endpoint that streams the file to user's browser"""
     try:
         if yt_dlp is None:
             return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
 
-        # Get JSON data
         data = request.get_json(force=True)
 
         url = (data.get('url') or '').strip()
@@ -132,130 +95,52 @@ def direct_download():
         referer = (data.get('referer') or '').strip() or None
         user_agent = (data.get('userAgent') or '').strip() or None
         extra_headers = data.get('headers') or {}
+        save_path_str = (data.get('savePath') or '').strip()
 
         if not url:
             return jsonify({'ok': False, 'error': 'URL required'}), 400
 
-        # Create temporary directory for this download
-        temp_dir = Path(tempfile.mkdtemp())
-        
+        # Use user-provided path or temp dir
+        if save_path_str:
+            save_dir = Path(save_path_str).expanduser().resolve()
+            save_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            save_dir = Path(tempfile.mkdtemp())
+
+        opts = build_opts(save_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
+
         try:
-            opts = build_opts(temp_dir, quality, output_type, mp3_bitrate, referer, user_agent, extra_headers)
-            
-            # Simple and reliable download approach
-            try:
-                # Try the main approach first
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    video_title = info.get('title', 'video')
-                    video_id = info.get('id', 'unknown')
-                    ydl.download([url])
-            except Exception as e:
-                print(f"Main approach failed: {e}")
-                
-                # Fallback to simple approach
-                try:
-                    simple_opts = {
-                        'format': 'best',
-                        'outtmpl': str(temp_dir / '%(title)s [%(id)s].%(ext)s'),
-                        'noplaylist': True,
-                        'quiet': True,
-                        'no_warnings': True,
-                        'no_check_certificate': True,
-                        'prefer_insecure': True,
-                        'http_headers': {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                            'Accept-Language': 'en-US,en;q=0.5',
-                            'Accept-Encoding': 'gzip, deflate',
-                            'Connection': 'keep-alive',
-                        }
-                    }
-                    with yt_dlp.YoutubeDL(simple_opts) as ydl:
-                        ydl.download([url])
-                except Exception as fallback_error:
-                    print(f"Fallback approach failed: {fallback_error}")
-                    raise fallback_error
-                
-                # Find the downloaded file
-                downloaded_files = list(temp_dir.glob('*'))
-                if not downloaded_files:
-                    return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
-                
-                file_path = downloaded_files[0]
-                filename = file_path.name
-                
-                # Sanitize filename to remove problematic characters
-                filename = re.sub(r'[^\w\-_\.]', '_', filename)
-                # Ensure it's not too long
-                if len(filename) > 100:
-                    name, ext = os.path.splitext(filename)
-                    filename = name[:90] + ext
-                # Ensure it starts with a safe character
-                if filename and not filename[0].isalnum():
-                    filename = 'video_' + filename
-                
-                # Copy file to a permanent location before serving
-                import tempfile as tf
-                permanent_file = tf.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1])
-                permanent_file.close()
-                
-                # Copy the downloaded file to permanent location
-                shutil.copy2(file_path, permanent_file.name)
-                
-                # Clean up the temporary directory immediately
-                try:
-                    shutil.rmtree(temp_dir)
-                    print(f"Cleaned up temp directory: {temp_dir}")
-                except Exception as e:
-                    print(f"Error cleaning up {temp_dir}: {e}")
-                
-                # Serve the permanent file
-                response = send_file(
-                    permanent_file.name,
-                    as_attachment=True,
-                    download_name=filename,
-                    mimetype='application/octet-stream'
-                )
-                
-                # Clean up permanent file after response
-                @response.call_on_close
-                def cleanup():
-                    try:
-                        os.unlink(permanent_file.name)
-                        print(f"Cleaned up permanent file: {permanent_file.name}")
-                    except Exception as e:
-                        print(f"Error cleaning up {permanent_file.name}: {e}")
-                
-                return response
-                
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                downloaded_file = Path(ydl.prepare_filename(info))
         except Exception as e:
-            # Clean up on error
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
-            print(f"Error in direct_download: {str(e)}")
-            return jsonify({'ok': False, 'error': str(e)}), 500
-            
-    except Exception as outer_e:
-        print(f"Outer error in direct_download: {str(outer_e)}")
-        return jsonify({'ok': False, 'error': f'Server error: {str(outer_e)}'}), 500
+            return jsonify({'ok': False, 'error': f'Download failed: {str(e)}'}), 500
+
+        if not downloaded_file.exists():
+            return jsonify({'ok': False, 'error': 'No file downloaded'}), 500
+
+        # Sanitize filename
+        filename = re.sub(r'[^\w\-_\.]', '_', downloaded_file.name)
+
+        return send_file(
+            downloaded_file,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/octet-stream'
+        )
+
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Server error: {str(e)}'}), 500
 
 
 @app.route('/api/download', methods=['POST'])
 def api_download():
-    """Legacy endpoint for progress tracking (optional)"""
     if yt_dlp is None:
         return jsonify({'ok': False, 'error': 'yt-dlp not available on server'}), 500
-
     data = request.get_json(force=True)
     url = (data.get('url') or '').strip()
-    
     if not url:
         return jsonify({'ok': False, 'error': 'URL required'}), 400
-
-    # For direct download, we don't need job tracking
     return jsonify({'ok': True, 'message': 'Use direct-download endpoint for immediate download'})
 
 
@@ -266,9 +151,8 @@ def index():
 
 @app.route('/api/test')
 def test():
-    """Test endpoint to check if server is working"""
     return jsonify({
-        'ok': True, 
+        'ok': True,
         'message': 'Server is working',
         'yt_dlp_available': yt_dlp is not None
     })
@@ -277,5 +161,3 @@ def test():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-
-
