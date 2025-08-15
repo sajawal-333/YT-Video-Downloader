@@ -160,6 +160,12 @@
         <span class="pill">Speed: <span id="speed">0</span></span>
         <span class="pill">ETA: <span id="eta">--</span></span>
       </div>
+      
+      <!-- Download Files Section -->
+      <div id="downloadSection" style="display: none; margin-top: 16px;">
+        <h4>📁 Download Files</h4>
+        <div id="downloadButtons"></div>
+      </div>
       <div class="adv-toggle" id="advToggle">⚙️ Advanced options</div>
       <div class="adv" id="advBox">
         <div class="row">
@@ -286,6 +292,12 @@
           $('btnStart').disabled = false;
           const line = `[${new Date().toLocaleTimeString()}] ${job.status.toUpperCase()}: ${job.message||''}\n`;
           $('log').textContent += line;
+          
+          // Show download buttons if files are available
+          if(job.status === 'done' && job.files && job.files.length > 0){
+            showDownloadButtons(job.files, jobId);
+          }
+          
           return;
         }
         setTimeout(poll, 1000);
@@ -323,6 +335,26 @@
       if(h) return `${h}h ${m}m ${ss}s`;
       if(m) return `${m}m ${ss}s`;
       return `${ss}s`;
+    }
+
+    function showDownloadButtons(files, jobId){
+      const downloadSection = $('downloadSection');
+      const downloadButtons = $('downloadButtons');
+      
+      downloadButtons.innerHTML = '';
+      
+      files.forEach(file => {
+        const button = document.createElement('button');
+        button.className = 'btn';
+        button.style.margin = '4px';
+        button.innerHTML = `⬇️ ${file.filename} (${humanSize(file.size)})`;
+        button.onclick = () => {
+          window.open(`/api/download-file/${jobId}/${encodeURIComponent(file.filename)}`, '_blank');
+        };
+        downloadButtons.appendChild(button);
+      });
+      
+      downloadSection.style.display = 'block';
     }
 
     $('btnStart').addEventListener('click', start);
