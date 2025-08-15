@@ -46,16 +46,32 @@ def build_opts(output_dir: Path, quality: str, output_type: str, mp3_bitrate: in
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
+        'extractor_retries': 3,
+        'fragment_retries': 3,
+        'retries': 3,
+        'socket_timeout': 30,
+        'extractor_timeout': 30,
+        'sleep_interval': 1,
+        'max_sleep_interval': 5,
     }
-    headers = {}
-    if user_agent:
-        headers['User-Agent'] = user_agent
+    
+    # Default headers to bypass 403 errors
+    headers = {
+        'User-Agent': user_agent or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+    
     if referer:
         headers['Referer'] = referer
     if extra_headers:
         headers.update(extra_headers)
-    if headers:
-        opts['http_headers'] = headers
+    
+    opts['http_headers'] = headers
     # Post-processing
     if output_type == 'mp3':
         opts['format'] = 'bestaudio/best'
